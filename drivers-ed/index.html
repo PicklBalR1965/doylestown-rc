@@ -79,6 +79,26 @@
     #bBrake { width: 64px; height: 64px; right: calc(env(safe-area-inset-right) + 70px); bottom: calc(env(safe-area-inset-bottom) + 70px); }
     #coach { font-size: 13px; bottom: calc(env(safe-area-inset-bottom) + 180px); }
   }
+  /* phones held upright */
+  @media (max-width: 520px) and (orientation: portrait) {
+    #btns { top: calc(env(safe-area-inset-top) + 6px); right: 6px; left: 6px; align-items: stretch; }
+    #btnrow { justify-content: space-between; flex-wrap: nowrap; gap: 4px; }
+    #btnrow .tb { padding: 6px 7px; font-size: 11px; white-space: nowrap; }
+    #minimap { position: fixed; top: calc(env(safe-area-inset-top) + 104px); right: 8px; width: 112px; height: 112px; }
+    #gps { top: calc(env(safe-area-inset-top) + 42px); left: 6px; right: 6px; transform: none; max-width: none; display: none; padding: 5px 10px; text-align: left; }
+    #gpsT { display: inline; margin-left: 8px; }
+    #top { top: calc(env(safe-area-inset-top) + 104px); left: 8px; max-width: 58vw; padding: 6px 9px; }
+    #lessonT { font-size: 11px; }
+    #top:not(.open) .ck:not(.bad):not(.score) { display: none; }
+    #top::after { content: "tap for checklist ▾"; display: block; font-size: 9px; opacity: .6; margin-top: 2px; }
+    #top.open::after { content: "tap to hide ▴"; }
+    #coach { bottom: calc(env(safe-area-inset-bottom) + 220px); font-size: 14px; max-width: 92vw; }
+    #wheel { bottom: calc(env(safe-area-inset-bottom) + 76px); width: 120px; height: 120px; }
+    #bGas { bottom: calc(env(safe-area-inset-bottom) + 76px); width: 66px; height: 112px; }
+    #bBrake { bottom: calc(env(safe-area-inset-bottom) + 76px); right: calc(env(safe-area-inset-right) + 80px); width: 76px; height: 76px; }
+    #dash { left: 4px; right: 4px; transform: none; justify-content: space-between; gap: 3px; padding: 5px 5px; }
+    #msg { font-size: 19px; top: 34%; }
+  }
 </style>
 </head>
 <body>
@@ -327,7 +347,7 @@ var sky = new THREE.Mesh(new THREE.SphereGeometry(2500, 32, 16), new THREE.Shade
   vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
   fragmentShader: 'varying vec3 vP; void main(){ gl_FragColor = vec4(mix(vec3(.79,.87,.94), vec3(.22,.47,.86), smoothstep(0.0,.45,max(vP.y,0.0))),1.0); }' }));
 scene.add(sky);
-addEventListener('resize', function () { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
+addEventListener('resize', function () { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); if (typeof syncDash === 'function') syncDash(); });
 function canvasTex(w, h, draw) { var c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h); var t = new THREE.CanvasTexture(c); t.anisotropy = 8; return t; }
 
 // ---------------- Roads ----------------
@@ -707,8 +727,8 @@ function buildMDX() {
   }
   A.front.push(wheel(-0.86, 1.45), wheel(0.86, 1.45)); wheel(-0.86, -1.4); wheel(0.86, -1.4);
   // interior: dashboard + steering wheel (seen in driver's view)
-  var dash = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.18, 0.45), lam(0x232427)); dash.position.set(0, 1.1, 0.95); root.add(dash);
-  var sw = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.03, 8, 22), lam(0x111111)); sw.position.set(0.38, 1.22, 0.62); sw.rotation.x = -0.35; root.add(sw); A.wheel = sw;
+  var dash = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.18, 0.45), lam(0x232427)); dash.position.set(0, 0.98, 1.0); root.add(dash);
+  var sw = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.03, 8, 22), lam(0x111111)); sw.position.set(0.38, 1.0, 0.68); sw.rotation.x = -0.5; root.add(sw); A.wheel = sw;
   A.fpv = new V3(0.38, 1.42, 0.15);
   root.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return { root: root, A: A };
@@ -754,7 +774,10 @@ var REP = null;
 var CATS = { belt: '🔒 Seatbelt', signals: '↪️ Turn signals', stops: '🛑 Stop signs & lights', lanes: '🛣️ Lines & lanes', speed: '⏱️ Speed limit', parking: '🅿️ Parking', safety: '💥 Safe driving' };
 function newReport() { REP = { score: 100, good: {}, bad: {}, notes: [], t0: game.time }; for (var k in CATS) { REP.good[k] = 0; REP.bad[k] = 0; } updChecklist(); }
 var lastSpeak = 0;
+var TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+function adapt(t) { if (!TOUCH) return t; return t.replace(/press B/g, 'tap the Seatbelt button').replace(/hold the brake \(down arrow\) and press D for Drive/g, 'hold BRAKE and tap D for Drive').replace(/ with E,/g, ' (tap ▶),').replace(/ with Q,/g, ' (tap ◀),').replace(/\(B\)/g, '').replace(/ \(Enter\)/g, ''); }
 function say(t, speak) {
+  t = adapt(t);
   $('coach').textContent = t; $('coach').classList.add('show'); clearTimeout(say.tm); say.tm = setTimeout(function () { $('coach').classList.remove('show'); }, 6000);
   if (speak !== false && game.voice && window.speechSynthesis) { try { speechSynthesis.cancel(); var u = new SpeechSynthesisUtterance(t.replace(/[^\w\s.,!?'’-]/g, ' ')); u.rate = 1.02; speechSynthesis.speak(u); } catch (e) {} }
 }
@@ -915,7 +938,7 @@ function routeStep() {
   if (game.finished) return;
   if (game.route && game.rIdx < game.route.length) {
     var p = game.route[game.rIdx], d = Math.hypot(C.x - p.x, C.z - p.z);
-    $('gpsT').textContent = p.t; $('gpsD').textContent = d > 1000 ? (d / 1609).toFixed(1) + ' mi' : Math.round(d * 3.28) + ' ft';
+    $('gpsT').textContent = adapt(p.t); $('gpsD').textContent = d > 1000 ? (d / 1609).toFixed(1) + ' mi' : Math.round(d * 3.28) + ' ft';
     var ang = Math.atan2(p.x - C.x, p.z - C.z) - C.yaw; $('gpsA').style.transform = 'rotate(' + (-ang * 57.3) + 'deg)';
     if (d < p.r && (game.rIdx < game.route.length - 1 || !game.lesson.park)) { game.rIdx++; if (game.rIdx < game.route.length) say(game.route[game.rIdx].t); setGPS(); chime(988, 0.08); }
     if (game.rIdx === game.route.length - 1 && game.lesson.park && d < p.r && Math.abs(C.v) < 0.2 && C.gear === 'P') finish('Lesson complete!');
@@ -1055,7 +1078,7 @@ var tickT = 0, blinkOn = false;
 // ---------------- Controls ----------------
 function shift(g) {
   if (C.gear === g) return;
-  if (!(input.keys.arrowdown || input.brake) && C.gear === 'P') { toast('Hold the brake (↓) to shift out of Park'); chime(300, 0.15); return; }
+  if (!(input.keys.arrowdown || input.brake || input.touchShift) && C.gear === 'P') { toast(TOUCH ? 'Hold BRAKE, then tap the gear' : 'Hold the brake (↓) to shift out of Park'); chime(300, 0.15); return; }
   if ((g === 'R' && C.v > 1) || (g === 'D' && C.v < -1) || (g === 'P' && Math.abs(C.v) > 0.8)) { toast('Stop the car before shifting to ' + g); chime(300, 0.15); return; }
   C.gear = g; syncDash(); if (g !== 'P' && !C.belt) toast('🔔 Buckle your seatbelt! (B)');
 }
@@ -1076,7 +1099,8 @@ hold($('bGas'), 'gas'); hold($('bBrake'), 'brake');
   var end = function (e) { if (e.pointerId !== id) return; id = null; input.steer = 0; $('wheelKnob').style.transform = ''; }; el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end); })();
 function tap(id, fn) { $(id).addEventListener('pointerdown', function (e) { e.preventDefault(); initAudio(); fn(); }); }
 tap('bBelt', belt); tap('bSigL', function () { signal('L'); }); tap('bSigR', function () { signal('R'); }); tap('bHorn', horn);
-['P', 'R', 'N', 'D'].forEach(function (g) { tap('g' + g, function () { if (input.brake || C.gear !== 'P' || g === 'P') { var b0 = input.brake; input.brake = 1; shift(g); input.brake = b0; } else shift(g); }); });
+['P', 'R', 'N', 'D'].forEach(function (g) { tap('g' + g, function () { var stopped = Math.abs(C.v) < 0.3; input.touchShift = stopped; if (stopped && !input.brake && C.gear === 'P' && g !== 'P') toast('Tip: in a real car, keep your foot on the brake while you shift', 2.5); shift(g); input.touchShift = false; }); });
+tap('top', function () { $('top').classList.toggle('open'); });
 tap('bCam', function () { game.cam = (game.cam + 1) % 3; syncDash(); });
 tap('bMenu', function () { openMenu(); });
 tap('bReport', function () { if (REP) showReport('Progress report'); });
@@ -1084,10 +1108,10 @@ tap('bSound', function () { game.sound = !game.sound; syncDash(); });
 tap('bVoice', function () { game.voice = !game.voice; if (!game.voice && window.speechSynthesis) speechSynthesis.cancel(); syncDash(); });
 function syncDash() {
   ['P', 'R', 'N', 'D'].forEach(function (g) { $('g' + g).classList.toggle('on', C.gear === g); });
-  $('bBelt').classList.toggle('on', C.belt); $('bBelt').textContent = C.belt ? '🔒 Belt on' : '⚠️ Seatbelt (B)';
-  $('bCam').textContent = '🎥 ' + CAMS[game.cam]; $('bSound').textContent = game.sound ? '🔊' : '🔇'; $('bVoice').textContent = game.voice ? '🗣️ Coach on' : '🤐 Coach off';
+  $('bBelt').classList.toggle('on', C.belt); $('bBelt').textContent = C.belt ? '🔒 Belt on' : (TOUCH ? '⚠️ Seatbelt' : '⚠️ Seatbelt (B)');
+  var narrow = innerWidth < 520; $('bCam').textContent = '🎥 ' + CAMS[game.cam]; $('bSound').textContent = game.sound ? '🔊' : '🔇'; $('bVoice').textContent = game.voice ? (narrow ? '🗣️' : '🗣️ Coach on') : (narrow ? '🤐' : '🤐 Coach off'); $('bReport').textContent = narrow ? '📋' : '📋 Report'; $('bMenu').textContent = narrow ? '☰' : '☰ Lessons';
 }
-var msgT = 0; function toast(t, s) { $('msg').textContent = t; $('msg').style.opacity = 1; msgT = s || 2; }
+var msgT = 0; function toast(t, s) { t = adapt(t); $('msg').textContent = t; $('msg').style.opacity = 1; msgT = s || 2; }
 function openMenu() { game.paused = true; $('menu').classList.remove('hidden'); document.body.classList.remove('playing'); $('menu').scrollTop = 0; buildMenu(); }
 function buildMenu() {
   var h = ''; LESSONS.forEach(function (L, i) { h += '<button class="opt" data-i="' + i + '"><div class="t">' + L.title + '</div><div class="d">' + L.sub + '</div></button>'; });
