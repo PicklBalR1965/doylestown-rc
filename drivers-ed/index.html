@@ -104,7 +104,7 @@
 <body>
 <div id="top" class="hud panel"><div id="lessonT">Driver's Ed</div><div id="checklist"></div></div>
 <div id="gps" class="hud panel"><span id="gpsA">⬆</span><span id="gpsD"></span><div id="gpsT"></div></div>
-<div id="btns" class="hud"><div id="btnrow"><button class="tb" id="bReport">📋 Report</button><button class="tb" id="bCam">🎥 Chase</button><button class="tb" id="bVoice">🗣️ Coach on</button><button class="tb" id="bSound">🔊</button><button class="tb" id="bMenu">☰ Lessons</button></div><canvas id="minimap" width="360" height="360"></canvas></div>
+<div id="btns" class="hud"><div id="btnrow"><button class="tb" id="bReport">📋 Report</button><button class="tb" id="bEasy">🟢 Easy</button><button class="tb" id="bCam">🎥 Chase</button><button class="tb" id="bVoice">🗣️ Coach on</button><button class="tb" id="bSound">🔊</button><button class="tb" id="bMenu">☰ Lessons</button></div><canvas id="minimap" width="360" height="360"></canvas></div>
 <div id="msg" class="hud"></div>
 <div id="coach" class="hud panel"></div>
 <div id="dash" class="hud panel">
@@ -765,7 +765,7 @@ function updateAI(dt) {
 // ---------------- Player car state ----------------
 var C = { x: 0, z: 0, y: 0, yaw: 0, v: 0, steer: 0, gear: 'P', belt: false, sigL: false, sigR: false, lastL: -99, lastR: -99, pitch: 0, roll: 0 };
 var input = { keys: {}, gas: 0, brake: 0, steer: 0 };
-var game = { playing: false, paused: true, time: 0, cam: 0, sound: true, voice: true, lesson: null };
+var game = { easy: true, playing: false, paused: true, time: 0, cam: 0, sound: true, voice: true, lesson: null };
 var CAMS = ['Chase', 'Driver', 'Top'];
 function place(x, z, yaw) { if (typeof camPos !== 'undefined') camPos.set(x - Math.sin(yaw) * 9, surfaceY(x, z) + 3.6, z - Math.cos(yaw) * 9); C.x = x; C.z = z; C.yaw = yaw; C.v = 0; C.steer = 0; C.gear = 'P'; C.y = surfaceY(x, z); C.belt = false; C.sigL = C.sigR = false; }
 
@@ -968,11 +968,34 @@ function blocked(x, z, yaw) {
   for (var k = 0; k < AIS.length; k++) { var a = AIS[k]; if (a.x !== undefined && Math.hypot(a.x - x, a.z - z) < 3.6 && Math.abs(a.m.position.y - C.y) < 2.5) return 'another car'; }
   return null;
 }
+// Easy mode lane-keeping: when hands are off the wheel, gently steer back to the middle of your lane
+function laneAssist() {
+  var n = nearRoad(C.x, C.z, C.y); if (!n || n.dist > n.r.hw + 0.5) return null;
+  if (NODES.some(function (N) { return Math.hypot(C.x - N.x, C.z - N.z) < N.r + 6; })) return null;
+  if (Math.abs(C.x - SPOT.x) < 30 && Math.abs(C.z - SPOT.z) < 8) return null;
+  var fwd = Math.sin(C.yaw) * n.dir[0] + Math.cos(C.yaw) * n.dir[1], dS = fwd >= 0 ? 1 : -1, off = n.off * dS, R = n.r, tgt;
+  if (R.oneWay && fwd < 0) return null;
+  if (R.kind === 'hwy') tgt = off < R.median + 3.85 ? R.median + 1.95 : R.median + 5.75;
+  else if (R.kind === 'ramp') tgt = 0;
+  else if (R.park) tgt = 2.0;
+  else tgt = Math.min(1.9, R.hw * 0.48);
+  var e = off - tgt, dy = Math.atan2(n.dir[0] * dS, n.dir[1] * dS) + clamp(e * 0.22, -0.3, 0.3), err = wrapA(dy - C.yaw);
+  if (Math.abs(err) > 0.55) return null;   // you're clearly turning — don't fight it
+  return clamp(-err * 2.2, -0.7, 0.7);
+}
 function step(dt) {
   var k = input.keys, gas = Math.max(k.arrowup ? 1 : 0, input.gas), brake = Math.max(k.arrowdown ? 1 : 0, input.brake);
   var steerIn = clamp((k.arrowright ? 1 : 0) - (k.arrowleft ? 1 : 0) + input.steer, -1, 1);
-  var maxSt = 0.62 / (1 + Math.abs(C.v) / 11);
-  C.steer += clamp(steerIn * maxSt - C.steer, -1.6 * dt, 1.6 * dt);
+  var maxSt = 0.62 / (1 + Math.abs(C.v) / (game.easy ? 7 : 11)), stRate = 1.6;
+  if (game.easy) {
+    stRate = 1.1;   // gentler wheel
+    var ln = Math.abs(steerIn) < 0.05 && C.v > 3 && !C.sigL && !C.sigR ? laneAssist() : null;
+    if (ln !== null) { steerIn = ln; C.assist = true; } else C.assist = false;
+    var lmEasy = (game.limit || 25) / MPH;   // speed helper: easing off the gas at the limit
+    if (C.v > lmEasy - 0.4) gas = Math.min(gas, Math.max(0, (lmEasy + 0.4 - C.v) / 0.8) * 0.5);
+    gas *= 0.75;
+  }
+  C.steer += clamp(steerIn * maxSt - C.steer, -stRate * dt, stRate * dt);
   if (!steerIn) C.steer -= C.steer * Math.min(1, dt * 1.5 * Math.min(1, Math.abs(C.v) / 3));   // wheel self-centers as you drive
   var acc = 0, g = C.gear;
   if (g === 'D') acc = gas * 3.8 * (1 - C.v / 60) + (gas || brake ? 0 : (C.v < 2.2 ? 1.2 : 0));        // idle creep
@@ -1101,6 +1124,7 @@ function tap(id, fn) { $(id).addEventListener('pointerdown', function (e) { e.pr
 tap('bBelt', belt); tap('bSigL', function () { signal('L'); }); tap('bSigR', function () { signal('R'); }); tap('bHorn', horn);
 ['P', 'R', 'N', 'D'].forEach(function (g) { tap('g' + g, function () { var stopped = Math.abs(C.v) < 0.3; input.touchShift = stopped; if (stopped && !input.brake && C.gear === 'P' && g !== 'P') toast('Tip: in a real car, keep your foot on the brake while you shift', 2.5); shift(g); input.touchShift = false; }); });
 tap('top', function () { $('top').classList.toggle('open'); });
+tap('bEasy', function () { game.easy = !game.easy; syncDash(); say(game.easy ? 'Easy mode on: I will help you stay in your lane and ease off the gas at the speed limit.' : 'Easy mode off. You are doing all of the driving now.'); });
 tap('bCam', function () { game.cam = (game.cam + 1) % 3; syncDash(); });
 tap('bMenu', function () { openMenu(); });
 tap('bReport', function () { if (REP) showReport('Progress report'); });
@@ -1109,7 +1133,7 @@ tap('bVoice', function () { game.voice = !game.voice; if (!game.voice && window.
 function syncDash() {
   ['P', 'R', 'N', 'D'].forEach(function (g) { $('g' + g).classList.toggle('on', C.gear === g); });
   $('bBelt').classList.toggle('on', C.belt); $('bBelt').textContent = C.belt ? '🔒 Belt on' : (TOUCH ? '⚠️ Seatbelt' : '⚠️ Seatbelt (B)');
-  var narrow = innerWidth < 520; $('bCam').textContent = '🎥 ' + CAMS[game.cam]; $('bSound').textContent = game.sound ? '🔊' : '🔇'; $('bVoice').textContent = game.voice ? (narrow ? '🗣️' : '🗣️ Coach on') : (narrow ? '🤐' : '🤐 Coach off'); $('bReport').textContent = narrow ? '📋' : '📋 Report'; $('bMenu').textContent = narrow ? '☰' : '☰ Lessons';
+  var narrow = innerWidth < 520; $('bCam').textContent = '🎥 ' + CAMS[game.cam]; $('bEasy').textContent = game.easy ? (narrow ? '🟢' : '🟢 Easy') : (narrow ? '⚪' : '⚪ Normal'); $('bSound').textContent = game.sound ? '🔊' : '🔇'; $('bVoice').textContent = game.voice ? (narrow ? '🗣️' : '🗣️ Coach on') : (narrow ? '🤐' : '🤐 Coach off'); $('bReport').textContent = narrow ? '📋' : '📋 Report'; $('bMenu').textContent = narrow ? '☰' : '☰ Lessons';
 }
 var msgT = 0; function toast(t, s) { t = adapt(t); $('msg').textContent = t; $('msg').style.opacity = 1; msgT = s || 2; }
 function openMenu() { game.paused = true; $('menu').classList.remove('hidden'); document.body.classList.remove('playing'); $('menu').scrollTop = 0; buildMenu(); }
@@ -1181,6 +1205,7 @@ function render(dt) {
 var last = performance.now();
 function frame(now) { requestAnimationFrame(frame); var dt = Math.min(0.05, (now - last) / 1000); last = now; update(dt); render(dt); }
 window.__sim = function (secs) { for (var t = 0; t < secs; t += 1 / 60) update(1 / 60); render(1 / 60); return { x: +C.x.toFixed(1), z: +C.z.toFixed(1), v: +(C.v * MPH).toFixed(1), gear: C.gear, score: REP && REP.score, idx: game.rIdx, fin: game.finished }; };
+window.__lane = function () { var n = nearRoad(C.x, C.z, C.y); if (!n) return null; var f = Math.sin(C.yaw) * n.dir[0] + Math.cos(C.yaw) * n.dir[1]; return { road: n.r.name, off: +(n.off * (f >= 0 ? 1 : -1)).toFixed(2), lim: game.limit }; };
 window.__C = C; window.__input = input; window.__game = game; window.__L = LESSONS; window.__start = function (i) { startLesson(LESSONS[i]); }; window.__rep = function () { return REP; }; window.__shift = shift; window.__belt = belt; window.__signal = signal;
 place(40, -108.2, Math.PI / 2); buildMenu(); syncDash(); requestAnimationFrame(frame);
 
